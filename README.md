@@ -34,4 +34,4 @@ Open `dashboard/index.html` in a browser (serve it via a local web server, not `
 
 ## License
 
-Add a license of your choice (e.g. MIT) if you want others to reuse this.
+MIT — see [LICENSE](LICENSE).
