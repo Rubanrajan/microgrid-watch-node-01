@@ -1,0 +1,793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Microgrid Watch — Node 01</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/mqtt/4.3.7/mqtt.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+
+  :root{
+    --ink: #10161a;
+    --surface: #161f24;
+    --surface-2: #1c262c;
+    --surface-3: #212c32;
+    --line: #2a353b;
+    --text: #edf0ec;
+    --muted: #8996a0;
+    --copper: #c17a4a;
+    --copper-bright: #dd9868;
+    --verdigris: #4f9d94;
+    --verdigris-bright: #6fc0b6;
+    --amber: #d9a13c;
+    --amber-bright: #f0bd5e;
+    --alarm: #e4574a;
+    --ok: #6fbf73;
+    --radius: 12px;
+    --radius-lg: 16px;
+    color-scheme: dark;
+  }
+
+  :root[data-theme="light"]{
+    --ink: #eef1ee;
+    --surface: #ffffff;
+    --surface-2: #f2f5f1;
+    --surface-3: #e9ede8;
+    --line: #d7ddd6;
+    --text: #17211f;
+    --muted: #5f6d68;
+    --copper: #9c5c31;
+    --copper-bright: #b97440;
+    --verdigris: #2f7a71;
+    --verdigris-bright: #23625b;
+    --amber: #a97314;
+    --amber-bright: #8f6110;
+    --alarm: #c23b22;
+    --ok: #2f8f52;
+    color-scheme: light;
+  }
+
+  *{ box-sizing: border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background: var(--ink);
+    background-image:
+      radial-gradient(ellipse 900px 500px at 15% -10%, color-mix(in srgb, var(--copper) 10%, transparent), transparent),
+      radial-gradient(ellipse 900px 500px at 100% 0%, color-mix(in srgb, var(--verdigris) 9%, transparent), transparent);
+    color: var(--text);
+    font-family: 'IBM Plex Sans', system-ui, sans-serif;
+    min-height: 100vh;
+    padding: 22px 16px 60px;
+    transition: background-color .25s ease, color .25s ease;
+  }
+
+  .mono{ font-family: 'JetBrains Mono', monospace; }
+
+  .wrap{ max-width: 1020px; margin: 0 auto; }
+
+  ::selection{ background: color-mix(in srgb, var(--verdigris) 40%, transparent); }
+
+  /* ---------- header ---------- */
+  header{
+    display:flex; align-items:flex-start; justify-content:space-between;
+    flex-wrap: wrap; gap: 14px;
+    margin-bottom: 20px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--line);
+  }
+  .brand{ display:flex; align-items:center; gap:12px; }
+  .brand-mark{
+    width:40px; height:40px; border-radius:8px;
+    background: var(--surface-2); border:1px solid var(--line);
+    display:flex; align-items:center; justify-content:center;
+    position:relative; flex-shrink:0;
+  }
+  .brand-mark svg{ width:22px; height:22px; }
+  .brand-id{ font-family:'JetBrains Mono',monospace; font-size:18px; font-weight:700; letter-spacing:0.02em; margin:0; }
+  .brand-id .node{ color: var(--verdigris-bright); }
+  .brand-tag{ display:flex; align-items:center; gap:7px; color:var(--muted); font-size:11.5px; margin-top:3px; text-transform:uppercase; letter-spacing:.08em; }
+  .live-pulse{ width:6px; height:6px; border-radius:50%; background: var(--ok); position:relative; }
+  .live-pulse::after{
+    content:''; position:absolute; inset:-4px; border-radius:50%; border:1px solid var(--ok);
+    animation: pulse 2.4s ease-out infinite;
+  }
+  @keyframes pulse{ 0%{ opacity:.7; transform:scale(.4);} 100%{ opacity:0; transform:scale(1.8);} }
+
+  .head-right{ display:flex; align-items:center; gap:12px; }
+  .clock{ font-family:'JetBrains Mono', monospace; color: var(--muted); font-size:13px; text-align:right; letter-spacing:.02em; }
+  .clock .date-lbl{ display:block; font-size:10px; text-transform:uppercase; letter-spacing:.1em; opacity:.75; margin-bottom:1px; }
+
+  .theme-btn{
+    width:38px; height:38px; border-radius:8px; border:1px solid var(--line);
+    background: var(--surface-2); color: var(--text); cursor:pointer;
+    display:flex; align-items:center; justify-content:center; font-size:16px;
+    transition: background .2s ease, transform .1s ease, border-color .2s ease;
+  }
+  .theme-btn:hover{ border-color: var(--verdigris); }
+  .theme-btn:active{ transform: scale(0.93); }
+
+  /* ---------- schematic (signature element) ---------- */
+  .schematic{
+    background: var(--surface); border:1px solid var(--line); border-radius: var(--radius-lg);
+    padding: 18px 22px 14px; margin-bottom:16px; overflow-x:auto;
+  }
+  .schematic-label{
+    font-family:'JetBrains Mono',monospace; font-size:10.5px; color:var(--muted);
+    text-transform:uppercase; letter-spacing:.12em; margin-bottom:8px;
+  }
+  .schematic svg{ display:block; width:100%; min-width:480px; height:auto; }
+  .sch-node-box{ fill: var(--surface-2); stroke: var(--line); stroke-width:1.5; }
+  .sch-node-txt{ font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:600; fill: var(--text); }
+  .sch-node-sub{ font-family:'IBM Plex Sans',sans-serif; font-size:8.5px; fill: var(--muted); text-transform:uppercase; letter-spacing:.06em; }
+  .sch-wire{ fill:none; stroke: var(--line); stroke-width:2; }
+  .sch-flow{ fill:none; stroke-width:2.5; stroke-linecap:round; stroke-dasharray: 3 9; }
+  .sch-flow.panel{ stroke: var(--copper-bright); animation: flow 1.1s linear infinite; }
+  .sch-flow.batt{ stroke: var(--verdigris-bright); animation: flow 1.6s linear infinite; }
+  .sch-flow.load{ stroke: var(--amber-bright); animation: flow 0.9s linear infinite; }
+  @keyframes flow{ to{ stroke-dashoffset: -24; } }
+  .sch-flow.idle{ animation-play-state: paused; opacity:.25; }
+
+  /* card/control transitions */
+  .card, .conn-card, .gauge-card, .energy-card, .thresh-card, .alert-banner, .status-pill, input, .btn{
+    transition: background-color .25s ease, border-color .25s ease, color .25s ease;
+  }
+
+  /* ---------- connection bar ---------- */
+  .conn-card{
+    background: var(--surface); border:1px solid var(--line); border-radius: var(--radius-lg);
+    padding: 14px 16px; margin-bottom: 14px;
+  }
+  .conn-row{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  .conn-row + .conn-row{ margin-top:10px; }
+  .conn-card input{
+    background: var(--surface-2); border:1px solid var(--line); color:var(--text);
+    border-radius:8px; padding:9px 11px; font-size:13px; font-family:'JetBrains Mono',monospace;
+    flex: 1 1 220px; min-width: 160px;
+  }
+  .conn-card input.short{ flex: 1 1 150px; }
+  .conn-card input:focus{ outline:none; border-color: var(--verdigris); }
+  .conn-card input::placeholder{ color: var(--muted); opacity:.7; }
+  .conn-hint{ font-size:11px; color:var(--muted); margin-top:9px; line-height:1.5; font-family:'JetBrains Mono',monospace; }
+  .conn-hint a{ color: var(--verdigris-bright); }
+  .btn{
+    border:none; border-radius:8px; padding:9px 16px; font-weight:600; font-size:13px;
+    cursor:pointer; font-family:'IBM Plex Sans',sans-serif; transition: filter .15s ease, transform .1s ease, background-color .15s ease;
+  }
+  .btn:active{ transform: scale(0.97); }
+  .btn-primary{ background: var(--verdigris); color:#0a1815; }
+  .btn-primary:hover{ background: var(--verdigris-bright); }
+  .btn-ghost{ background: transparent; color: var(--muted); border:1px solid var(--line); }
+  .btn-ghost:hover{ border-color: var(--muted); color: var(--text); }
+  .btn:focus-visible, .theme-btn:focus-visible, input:focus-visible{ outline: 2px solid var(--verdigris-bright); outline-offset: 2px; }
+
+  .status-pill{
+    display:flex; align-items:center; gap:7px; font-size:12px; color: var(--muted);
+    padding: 7px 11px; border-radius:20px; background: var(--surface-2); white-space:nowrap;
+    font-family:'JetBrains Mono',monospace;
+  }
+  .dot{ width:7px; height:7px; border-radius:50%; background: var(--muted); }
+  .dot.on{ background: var(--ok); box-shadow: 0 0 7px var(--ok); }
+  .dot.off{ background: var(--alarm); box-shadow: 0 0 7px var(--alarm); }
+
+  /* ---------- alert banner ---------- */
+  .alert-banner{
+    display:none; background: color-mix(in srgb, var(--alarm) 14%, var(--surface));
+    border:1px solid color-mix(in srgb, var(--alarm) 45%, var(--line));
+    color: var(--text); border-radius: var(--radius-lg);
+    padding: 13px 16px; margin-bottom:14px; font-size:13.5px; line-height:1.5;
+  }
+  .alert-banner.show{ display:block; }
+  .alert-banner b{ color: var(--alarm); font-family:'JetBrains Mono',monospace; letter-spacing:.03em; }
+
+  /* ---------- instrument grid ---------- */
+  .grid{ display:grid; grid-template-columns: repeat(3, 1fr); gap:14px; margin-bottom:14px; }
+  @media (max-width: 760px){ .grid{ grid-template-columns: 1fr; } }
+
+  .card{
+    background: var(--surface); border:1px solid var(--line); border-radius: var(--radius-lg);
+    padding: 17px 18px 15px; position:relative; overflow:hidden;
+  }
+  .card::before{
+    content:''; position:absolute; top:0; left:0; right:0; height:3px;
+  }
+  .card.panel::before{ background: var(--copper); }
+  .card.battery::before{ background: var(--verdigris); }
+  .card.load::before{ background: var(--amber); }
+
+  .card-top{ display:flex; align-items:center; justify-content:space-between; margin-bottom:11px; }
+  .card-label{ font-family:'JetBrains Mono',sans-serif; font-weight:600; font-size:13px; letter-spacing:.01em; }
+  .card.panel .card-label{ color: var(--copper-bright); }
+  .card.battery .card-label{ color: var(--verdigris-bright); }
+  .card.load .card-label{ color: var(--amber-bright); }
+  .card-sub{ font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.08em; }
+
+  .reading-row{ display:flex; align-items:baseline; gap:6px; margin: 2px 0 13px; }
+  .reading-row .val{ font-family:'JetBrains Mono',monospace; font-size: 27px; font-weight:600; }
+  .reading-row .unit{ font-size:12px; color:var(--muted); }
+
+  .metric-mini{ display:flex; justify-content:space-between; font-size:11.5px; color:var(--muted); margin-top:3px; }
+  .metric-mini span.mono{ color: var(--text); }
+
+  canvas.spark{ width:100%; height:36px; display:block; margin-top:11px; }
+
+  /* ---------- gauge + energy row ---------- */
+  .row2{ display:grid; grid-template-columns: 1fr 1.6fr; gap:14px; margin-bottom:14px; }
+  @media (max-width: 760px){ .row2{ grid-template-columns:1fr; } }
+
+  .gauge-card{
+    background: var(--surface); border:1px solid var(--line); border-radius: var(--radius-lg);
+    padding: 16px; display:flex; flex-direction:column; align-items:center; justify-content:center;
+  }
+  .gauge-card .card-label{ align-self:flex-start; font-family:'JetBrains Mono',sans-serif; font-weight:600; font-size:13px; color:var(--verdigris-bright); margin-bottom:4px; }
+  .gauge-pct{ font-family:'JetBrains Mono',monospace; font-size:31px; font-weight:600; margin-top:-6px; }
+  .gauge-state{ font-size:11.5px; color:var(--muted); margin-top:2px; }
+
+  .energy-card{
+    background: var(--surface); border:1px solid var(--line); border-radius: var(--radius-lg);
+    padding: 16px 18px;
+  }
+  .energy-card .card-label{ font-family:'JetBrains Mono',sans-serif; font-weight:600; font-size:13px; margin-bottom:13px; }
+  .energy-bars{ display:flex; flex-direction:column; gap:13px; }
+  .ebar-top{ display:flex; justify-content:space-between; font-size:12px; margin-bottom:5px; }
+  .ebar-top .lbl{ color:var(--muted); }
+  .ebar-top .amt{ font-family:'JetBrains Mono',monospace; font-weight:600; }
+  .ebar-track{ background: var(--surface-2); border-radius:6px; height:8px; overflow:hidden; }
+  .ebar-fill{ height:100%; border-radius:6px; transition: width .4s ease; }
+  .ebar-fill.gen{ background: linear-gradient(90deg, var(--copper), var(--copper-bright)); }
+  .ebar-fill.cons{ background: linear-gradient(90deg, var(--amber), var(--amber-bright)); }
+  .energy-foot{ display:flex; justify-content:space-between; margin-top:13px; font-size:11px; color:var(--muted); font-family:'JetBrains Mono',monospace; }
+  .energy-foot button{ background:none; border:none; color:var(--muted); text-decoration:underline; cursor:pointer; font-size:11px; font-family:'IBM Plex Sans',sans-serif; }
+  .energy-foot button:hover{ color: var(--text); }
+
+  /* ---------- thresholds ---------- */
+  .thresh-card{
+    background: var(--surface); border:1px solid var(--line); border-radius: var(--radius-lg);
+    padding: 16px 18px;
+  }
+  .thresh-head{ display:flex; align-items:center; justify-content:space-between; cursor:pointer; }
+  .thresh-head .card-label{ font-family:'JetBrains Mono',sans-serif; font-weight:600; font-size:13px; }
+  .thresh-head .chev{ color:var(--muted); transition: transform .2s ease; font-size:11.5px; font-family:'JetBrains Mono',monospace; }
+  .thresh-body{ display:none; margin-top: 15px; }
+  .thresh-body.open{ display:block; }
+  .thresh-grid{ display:grid; grid-template-columns: repeat(2, 1fr); gap: 12px 16px; }
+  @media (max-width:600px){ .thresh-grid{ grid-template-columns: 1fr; } }
+  .field{ display:flex; flex-direction:column; gap:5px; }
+  .field label{ font-size:11.5px; color:var(--muted); }
+  .field input{
+    background: var(--surface-2); border:1px solid var(--line); color:var(--text);
+    border-radius:8px; padding:9px 11px; font-size:13px; font-family:'JetBrains Mono',monospace;
+  }
+  .field input:focus{ outline:none; border-color: var(--verdigris); }
+  .thresh-actions{ margin-top:15px; display:flex; gap:10px; align-items:center; }
+  .saved-note{ font-size:11.5px; color: var(--ok); opacity:0; transition: opacity .3s ease; font-family:'JetBrains Mono',monospace; }
+  .saved-note.show{ opacity:1; }
+
+  footer{ text-align:center; color:var(--muted); font-size:11px; margin-top:24px; font-family:'JetBrains Mono',monospace; letter-spacing:.02em; }
+
+  @media (prefers-reduced-motion: reduce){
+    .sch-flow{ animation: none !important; }
+    .live-pulse::after{ animation: none !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="brand">
+      <div class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="color:var(--copper-bright)">
+          <path d="M13 2 3 14h7l-1 8 11-14h-7l0-6z"/>
+        </svg>
+      </div>
+      <div>
+        <h1 class="brand-id">MICROGRID·WATCH <span class="node">/ NODE-01</span></h1>
+        <div class="brand-tag"><span class="live-pulse"></span> 12V solar · lead-acid · standalone ESP32</div>
+      </div>
+    </div>
+    <div class="head-right">
+      <div class="clock"><span class="date-lbl" id="dateLbl">--</span><span id="clock">--:--:--</span></div>
+      <button class="theme-btn" id="themeBtn" title="Toggle light/dark mode">🌙</button>
+    </div>
+  </header>
+
+  <div class="schematic">
+    <div class="schematic-label">System topology</div>
+    <svg viewBox="0 0 620 90" preserveAspectRatio="xMinYMid meet">
+      <!-- wires -->
+      <path class="sch-wire" d="M90,45 L195,45"/>
+      <path class="sch-wire" d="M285,45 L340,45 L340,45 L395,45"/>
+      <path class="sch-wire" d="M485,45 L560,45"/>
+      <!-- animated flow overlays -->
+      <path class="sch-flow panel" id="flowPanel" d="M90,45 L195,45"/>
+      <path class="sch-flow batt" id="flowBatt" d="M285,45 L395,45"/>
+      <path class="sch-flow load" id="flowLoad" d="M485,45 L560,45"/>
+
+      <!-- panel node -->
+      <rect class="sch-node-box" x="6" y="22" width="84" height="46" rx="8"/>
+      <text class="sch-node-txt" x="48" y="44" text-anchor="middle">PANEL</text>
+      <text class="sch-node-sub" x="48" y="57" text-anchor="middle">INA219 · 0x41</text>
+
+      <!-- controller node -->
+      <rect class="sch-node-box" x="195" y="22" width="90" height="46" rx="8"/>
+      <text class="sch-node-txt" x="240" y="41" text-anchor="middle">PWM CTRL</text>
+      <text class="sch-node-sub" x="240" y="53" text-anchor="middle">hardware only</text>
+      <text class="sch-node-sub" x="240" y="63" text-anchor="middle">no data out</text>
+
+      <!-- battery node -->
+      <rect class="sch-node-box" x="395" y="22" width="90" height="46" rx="8"/>
+      <text class="sch-node-txt" x="440" y="44" text-anchor="middle">BATTERY</text>
+      <text class="sch-node-sub" x="440" y="57" text-anchor="middle">INA219 · 0x40</text>
+
+      <!-- load node -->
+      <rect class="sch-node-box" x="560" y="22" width="54" height="46" rx="8"/>
+      <text class="sch-node-txt" x="587" y="41" text-anchor="middle">LOAD</text>
+      <text class="sch-node-sub" x="587" y="53" text-anchor="middle">0x44</text>
+      <text class="sch-node-sub" x="587" y="63" text-anchor="middle">relay</text>
+    </svg>
+  </div>
+
+  <div class="conn-card">
+    <div class="conn-row">
+      <input id="brokerUrl" placeholder="wss://xxxxxxxx.s1.eu.hivemq.cloud:8884/mqtt">
+      <input id="topic" placeholder="microgrid/site1/telemetry">
+    </div>
+    <div class="conn-row">
+      <input id="mqttUser" class="short" placeholder="HiveMQ username" autocomplete="username">
+      <input id="mqttPass" class="short" type="password" placeholder="HiveMQ password" autocomplete="current-password">
+      <button class="btn btn-primary" id="connectBtn">Connect</button>
+      <button class="btn btn-ghost" id="demoBtn">Try demo data</button>
+      <div class="status-pill"><span class="dot" id="statusDot"></span><span id="statusText">Not connected</span></div>
+    </div>
+    <div class="conn-hint">HiveMQ Cloud → cluster details for the host, port 8884, path <span class="mono">/mqtt</span>. Credentials come from Access Management → your cluster's device credentials. Password isn't saved between sessions.</div>
+  </div>
+
+  <div class="alert-banner" id="alertBanner"></div>
+
+  <div class="grid">
+    <div class="card panel">
+      <div class="card-top"><span class="card-label">Panel</span><span class="card-sub">Generation</span></div>
+      <div class="reading-row"><span class="val mono" id="panelP">0.0</span><span class="unit">W</span></div>
+      <div class="metric-mini"><span>Voltage</span><span class="mono" id="panelV">0.00 V</span></div>
+      <div class="metric-mini"><span>Current</span><span class="mono" id="panelI">0.00 A</span></div>
+      <div class="metric-mini"><span>Avg power</span><span class="mono" id="panelAvg">0.0 W</span></div>
+      <canvas class="spark" id="sparkPanel"></canvas>
+    </div>
+
+    <div class="card battery">
+      <div class="card-top"><span class="card-label">Battery</span><span class="card-sub">Storage</span></div>
+      <div class="reading-row"><span class="val mono" id="batteryV">0.00</span><span class="unit">V</span></div>
+      <div class="metric-mini"><span>Current</span><span class="mono" id="batteryI">0.00 A</span></div>
+      <div class="metric-mini"><span>Power</span><span class="mono" id="batteryP">0.0 W</span></div>
+      <div class="metric-mini"><span>Avg power</span><span class="mono" id="batteryAvg">0.0 W</span></div>
+      <canvas class="spark" id="sparkBattery"></canvas>
+    </div>
+
+    <div class="card load">
+      <div class="card-top"><span class="card-label">Load</span><span class="card-sub">Consumption</span></div>
+      <div class="reading-row"><span class="val mono" id="loadP">0.0</span><span class="unit">W</span></div>
+      <div class="metric-mini"><span>Voltage</span><span class="mono" id="loadV">0.00 V</span></div>
+      <div class="metric-mini"><span>Current</span><span class="mono" id="loadI">0.00 A</span></div>
+      <div class="metric-mini"><span>Avg power</span><span class="mono" id="loadAvg">0.0 W</span></div>
+      <canvas class="spark" id="sparkLoad"></canvas>
+    </div>
+  </div>
+
+  <div class="row2">
+    <div class="gauge-card">
+      <span class="card-label">Battery state</span>
+      <svg width="140" height="86" viewBox="0 0 140 86">
+        <path d="M10,80 A60,60 0 0,1 130,80" fill="none" stroke="var(--line)" stroke-width="12" stroke-linecap="round"/>
+        <path id="gaugeArc" d="M10,80 A60,60 0 0,1 130,80" fill="none" stroke="#4f9d94" stroke-width="12" stroke-linecap="round" stroke-dasharray="188.5" stroke-dashoffset="188.5"/>
+      </svg>
+      <div class="gauge-pct mono" id="gaugePct">--%</div>
+      <div class="gauge-state" id="gaugeState">Waiting for data</div>
+    </div>
+
+    <div class="energy-card">
+      <div class="card-label">Today's energy</div>
+      <div class="energy-bars">
+        <div class="ebar-row">
+          <div class="ebar-top"><span class="lbl">Generated (panel)</span><span class="amt mono" id="energyGen">0.000 kWh</span></div>
+          <div class="ebar-track"><div class="ebar-fill gen" id="energyGenBar" style="width:0%"></div></div>
+        </div>
+        <div class="ebar-row">
+          <div class="ebar-top"><span class="lbl">Consumed (load)</span><span class="amt mono" id="energyCons">0.000 kWh</span></div>
+          <div class="ebar-track"><div class="ebar-fill cons" id="energyConsBar" style="width:0%"></div></div>
+        </div>
+      </div>
+      <div class="energy-foot">
+        <span id="energyDate">--</span>
+        <button id="resetEnergy">Reset today's totals</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="thresh-card">
+    <div class="thresh-head" id="threshHead">
+      <span class="card-label">Alert thresholds</span>
+      <span class="chev" id="threshChev">▾ customize</span>
+    </div>
+    <div class="thresh-body" id="threshBody">
+      <div class="thresh-grid">
+        <div class="field"><label>Battery low voltage (V)</label><input type="number" step="0.1" id="thBattLow"></div>
+        <div class="field"><label>Battery critical voltage (V)</label><input type="number" step="0.1" id="thBattCrit"></div>
+        <div class="field"><label>Max load current (A)</label><input type="number" step="0.1" id="thLoadI"></div>
+        <div class="field"><label>Max load power (W)</label><input type="number" step="1" id="thLoadP"></div>
+        <div class="field"><label>Min panel power while daylight (W)</label><input type="number" step="0.5" id="thPanelP"></div>
+        <div class="field"><label>Panel "producing" voltage floor (V)</label><input type="number" step="0.1" id="thPanelV"></div>
+      </div>
+      <div class="thresh-actions">
+        <button class="btn btn-primary" id="saveThresh">Save thresholds</button>
+        <span class="saved-note" id="savedNote">Saved</span>
+      </div>
+    </div>
+  </div>
+
+  <footer>DATA STAYS ON THIS DEVICE UNLESS CONNECTED TO A BROKER · THRESHOLDS AND TOTALS SAVE LOCALLY</footer>
+</div>
+
+<script>
+// ---------------- local storage shim ----------------
+// Standalone / VS Code use has no window.storage (that's a claude.ai-artifact-only API),
+// so persistence here runs on plain localStorage instead, wrapped to keep the same async shape.
+const storage = {
+  async get(key){
+    const v = localStorage.getItem(key);
+    return v === null ? null : { key, value: v };
+  },
+  async set(key, value){
+    localStorage.setItem(key, value);
+    return { key, value };
+  }
+};
+
+// ---------------- state ----------------
+const groups = ['panel','battery','load'];
+const hist = { panel: [], battery: [], load: [] };   // rolling power history for sparkline + average
+const HIST_LEN = 40;
+
+let client = null;
+let demoTimer = null;
+let lastTs = null;
+let energy = { date: todayStr(), genWh: 0, consWh: 0 };
+let thresholds = {
+  battLow: 11.5, battCrit: 10.8, loadI: 10, loadP: 100, panelP: 5, panelV: 5
+};
+
+function todayStr(){ return new Date().toISOString().slice(0,10); }
+
+// ---------------- persistence ----------------
+async function loadPersisted(){
+  try {
+    const t = await storage.get('thresholds');
+    if (t && t.value) thresholds = { ...thresholds, ...JSON.parse(t.value) };
+  } catch(e){}
+  try {
+    const e = await storage.get('daily-energy');
+    if (e && e.value) {
+      const parsed = JSON.parse(e.value);
+      if (parsed.date === todayStr()) energy = parsed;
+    }
+  } catch(e){}
+  try {
+    const c = await storage.get('connection-settings');
+    if (c && c.value) {
+      const parsed = JSON.parse(c.value);
+      document.getElementById('brokerUrl').value = parsed.brokerUrl || '';
+      document.getElementById('topic').value = parsed.topic || '';
+      document.getElementById('mqttUser').value = parsed.username || '';
+      // password intentionally not persisted
+    }
+  } catch(e){}
+  fillThresholdInputs();
+  renderEnergy();
+}
+
+async function saveConnectionSettings(){
+  const brokerUrl = document.getElementById('brokerUrl').value.trim();
+  const topic = document.getElementById('topic').value.trim();
+  const username = document.getElementById('mqttUser').value.trim();
+  try { await storage.set('connection-settings', JSON.stringify({brokerUrl, topic, username})); } catch(e){}
+}
+
+let lastEnergySave = 0;
+async function persistEnergy(){
+  const now = Date.now();
+  if (now - lastEnergySave < 8000) return;
+  lastEnergySave = now;
+  try { await storage.set('daily-energy', JSON.stringify(energy)); } catch(e){}
+}
+
+async function persistThresholds(){
+  try { await storage.set('thresholds', JSON.stringify(thresholds)); } catch(e){}
+}
+
+// ---------------- thresholds UI ----------------
+function fillThresholdInputs(){
+  document.getElementById('thBattLow').value = thresholds.battLow;
+  document.getElementById('thBattCrit').value = thresholds.battCrit;
+  document.getElementById('thLoadI').value = thresholds.loadI;
+  document.getElementById('thLoadP').value = thresholds.loadP;
+  document.getElementById('thPanelP').value = thresholds.panelP;
+  document.getElementById('thPanelV').value = thresholds.panelV;
+}
+
+document.getElementById('threshHead').addEventListener('click', () => {
+  const body = document.getElementById('threshBody');
+  const chev = document.getElementById('threshChev');
+  const open = body.classList.toggle('open');
+  chev.textContent = open ? '▴ hide' : '▾ customize';
+});
+
+document.getElementById('saveThresh').addEventListener('click', async () => {
+  thresholds = {
+    battLow: parseFloat(document.getElementById('thBattLow').value) || thresholds.battLow,
+    battCrit: parseFloat(document.getElementById('thBattCrit').value) || thresholds.battCrit,
+    loadI: parseFloat(document.getElementById('thLoadI').value) || thresholds.loadI,
+    loadP: parseFloat(document.getElementById('thLoadP').value) || thresholds.loadP,
+    panelP: parseFloat(document.getElementById('thPanelP').value) || thresholds.panelP,
+    panelV: parseFloat(document.getElementById('thPanelV').value) || thresholds.panelV,
+  };
+  await persistThresholds();
+  const note = document.getElementById('savedNote');
+  note.classList.add('show');
+  setTimeout(() => note.classList.remove('show'), 1600);
+  evaluateAlerts(window.__lastReading || {});
+});
+
+document.getElementById('resetEnergy').addEventListener('click', async () => {
+  energy = { date: todayStr(), genWh: 0, consWh: 0 };
+  await storage.set('daily-energy', JSON.stringify(energy));
+  renderEnergy();
+});
+
+// ---------------- connection ----------------
+document.getElementById('connectBtn').addEventListener('click', () => {
+  if (client) { disconnect(); return; }
+  const url = document.getElementById('brokerUrl').value.trim();
+  const topic = document.getElementById('topic').value.trim();
+  const username = document.getElementById('mqttUser').value.trim();
+  const password = document.getElementById('mqttPass').value;
+  if (!url || !topic) { alert('Enter a broker WebSocket URL and topic first.'); return; }
+  if (!username || !password) { alert('HiveMQ Cloud requires a username and password — enter your device credentials.'); return; }
+  saveConnectionSettings();
+  stopDemo();
+  connectMqtt(url, topic, username, password);
+});
+
+function connectMqtt(url, topic, username, password){
+  setStatus('connecting');
+  try {
+    client = mqtt.connect(url, {
+      username,
+      password,
+      clientId: 'microgrid-watch-' + Math.random().toString(16).slice(2, 10),
+      connectTimeout: 8000,
+      reconnectPeriod: 4000,
+      clean: true,
+    });
+  } catch(e) {
+    setStatus('off', 'Invalid broker URL');
+    client = null;
+    return;
+  }
+  client.on('connect', () => {
+    setStatus('on', 'Connected');
+    client.subscribe(topic);
+    document.getElementById('connectBtn').textContent = 'Disconnect';
+  });
+  client.on('reconnect', () => setStatus('connecting', 'Reconnecting…'));
+  client.on('close', () => setStatus('off', 'Disconnected'));
+  client.on('error', (err) => setStatus('off', 'Connection error — check credentials'));
+  client.on('message', (t, payload) => {
+    try { onReading(JSON.parse(payload.toString())); } catch(e){}
+  });
+}
+
+function disconnect(){
+  if (client) { client.end(true); client = null; }
+  document.getElementById('connectBtn').textContent = 'Connect';
+  setStatus('off', 'Not connected');
+}
+
+function setStatus(state, text){
+  const dot = document.getElementById('statusDot');
+  dot.className = 'dot ' + (state === 'on' ? 'on' : state === 'off' ? 'off' : '');
+  document.getElementById('statusText').textContent = text || (state === 'connecting' ? 'Connecting…' : 'Not connected');
+}
+
+// ---------------- demo mode ----------------
+document.getElementById('demoBtn').addEventListener('click', () => {
+  if (demoTimer) { stopDemo(); return; }
+  disconnect();
+  document.getElementById('demoBtn').textContent = 'Stop demo';
+  setStatus('on', 'Demo data (not a real broker)');
+  let t = 0;
+  demoTimer = setInterval(() => {
+    t += 1;
+    const sun = Math.max(0, Math.sin(t/30));
+    const panelV = 16 + sun * 3 + (Math.random()-0.5)*0.3;
+    const panelI = sun * 4 + (Math.random()-0.5)*0.2;
+    const batteryV = 12.2 + sun*0.3 - (t%200>150 ? 0.6 : 0) + (Math.random()-0.5)*0.05;
+    const batteryI = (sun*2 - 1.2) + (Math.random()-0.5)*0.2;
+    const loadV = 12.0 + (Math.random()-0.5)*0.1;
+    const loadI = 1.5 + Math.random()*0.8;
+    onReading({
+      panelV, panelI, panelP: panelV*panelI,
+      batteryV, batteryI, batteryP: batteryV*batteryI,
+      loadV, loadI, loadP: loadV*loadI,
+      relayOn: true
+    });
+  }, 1500);
+});
+function stopDemo(){
+  if (demoTimer) { clearInterval(demoTimer); demoTimer = null; }
+  document.getElementById('demoBtn').textContent = 'Try demo data';
+}
+
+// ---------------- reading pipeline ----------------
+function onReading(r){
+  window.__lastReading = r;
+  const now = Date.now();
+  const dtHours = lastTs ? (now - lastTs) / 3600000 : 0;
+  lastTs = now;
+
+  if (energy.date !== todayStr()) energy = { date: todayStr(), genWh: 0, consWh: 0 };
+  if (dtHours > 0 && dtHours < 0.05) { // ignore first sample / long gaps
+    energy.genWh += (r.panelP || 0) * dtHours;
+    energy.consWh += (r.loadP || 0) * dtHours;
+    persistEnergy();
+  }
+
+  updateGroup('panel', r.panelV, r.panelI, r.panelP);
+  updateGroup('battery', r.batteryV, r.batteryI, r.batteryP ?? (r.batteryV*r.batteryI));
+  updateGroup('load', r.loadV, r.loadI, r.loadP);
+
+  renderGauge(r.batteryV);
+  renderEnergy();
+  evaluateAlerts(r);
+}
+
+function updateGroup(name, v, i, p){
+  if (v == null) return;
+  document.getElementById(name+'V') && (document.getElementById(name+'V').textContent = (name==='battery' ? v.toFixed(2) : v.toFixed(2)+' V'));
+  if (name === 'battery') {
+    document.getElementById('batteryI').textContent = i.toFixed(2)+' A';
+    document.getElementById('batteryP').textContent = p.toFixed(1)+' W';
+  } else {
+    document.getElementById(name+'I').textContent = i.toFixed(2)+' A';
+    document.getElementById(name+'P').textContent = p.toFixed(1);
+  }
+  hist[name].push(p);
+  if (hist[name].length > HIST_LEN) hist[name].shift();
+  const avg = hist[name].reduce((a,b)=>a+b,0) / hist[name].length;
+  document.getElementById(name+'Avg').textContent = avg.toFixed(1) + ' W';
+  drawSpark(name, hist[name]);
+  updateSchematicFlow(name, p);
+}
+
+function updateSchematicFlow(name, p){
+  const map = { panel: 'flowPanel', battery: 'flowBatt', load: 'flowLoad' };
+  const el = document.getElementById(map[name]);
+  if (!el) return;
+  const active = (p || 0) > 0.3;
+  el.classList.toggle('idle', !active);
+}
+
+function drawSpark(name, data){
+  const canvas = document.getElementById('spark' + name.charAt(0).toUpperCase()+name.slice(1));
+  if (!canvas) return;
+  const styles = getComputedStyle(document.documentElement);
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight || 36;
+  canvas.width = w*dpr; canvas.height = h*dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr,dpr);
+  ctx.clearRect(0,0,w,h);
+  if (data.length < 2) return;
+  const max = Math.max(...data, 0.01), min = Math.min(...data, 0);
+  const range = (max - min) || 1;
+  const colorVar = name==='panel' ? '--copper-bright' : name==='battery' ? '--verdigris-bright' : '--amber-bright';
+  const color = styles.getPropertyValue(colorVar).trim() || '#4f9d94';
+  ctx.beginPath();
+  data.forEach((v,idx) => {
+    const x = (idx/(data.length-1)) * w;
+    const y = h - ((v-min)/range) * (h-4) - 2;
+    idx===0 ? ctx.moveTo(x,y) : ctx.lineTo(x,y);
+  });
+  ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.lineJoin='round'; ctx.stroke();
+  ctx.lineTo(w,h); ctx.lineTo(0,h); ctx.closePath();
+  ctx.fillStyle = color + '22'; ctx.fill();
+}
+
+function renderGauge(v){
+  if (v == null) return;
+  const styles = getComputedStyle(document.documentElement);
+  const lowBound = thresholds.battCrit, highBound = 13.0;
+  let pct = ((v - lowBound) / (highBound - lowBound)) * 100;
+  pct = Math.max(0, Math.min(100, pct));
+  const circumference = 188.5;
+  const offset = circumference - (circumference * pct/100);
+  const arc = document.getElementById('gaugeArc');
+  arc.style.strokeDashoffset = offset;
+  arc.style.stroke = pct < 25 ? styles.getPropertyValue('--alarm').trim()
+                    : pct < 50 ? styles.getPropertyValue('--amber').trim()
+                    : styles.getPropertyValue('--verdigris').trim();
+  document.getElementById('gaugePct').textContent = Math.round(pct) + '%';
+  document.getElementById('gaugeState').textContent =
+    v < thresholds.battCrit ? 'Critical — load shed active' :
+    v < thresholds.battLow ? 'Low — monitor closely' : 'Healthy';
+}
+
+function renderEnergy(){
+  document.getElementById('energyGen').textContent = (energy.genWh/1000).toFixed(3) + ' kWh';
+  document.getElementById('energyCons').textContent = (energy.consWh/1000).toFixed(3) + ' kWh';
+  document.getElementById('energyDate').textContent = energy.date;
+  const maxRef = Math.max(energy.genWh, energy.consWh, 1);
+  document.getElementById('energyGenBar').style.width = (energy.genWh/maxRef*100) + '%';
+  document.getElementById('energyConsBar').style.width = (energy.consWh/maxRef*100) + '%';
+}
+
+function evaluateAlerts(r){
+  const msgs = [];
+  if (r.batteryV != null && r.batteryV < thresholds.battCrit) msgs.push(`Battery critical: ${r.batteryV.toFixed(2)}V (below ${thresholds.battCrit}V)`);
+  else if (r.batteryV != null && r.batteryV < thresholds.battLow) msgs.push(`Battery low: ${r.batteryV.toFixed(2)}V (below ${thresholds.battLow}V)`);
+  if (r.loadI != null && r.loadI > thresholds.loadI) msgs.push(`Load current high: ${r.loadI.toFixed(2)}A (above ${thresholds.loadI}A)`);
+  if (r.loadP != null && r.loadP > thresholds.loadP) msgs.push(`Load power high: ${r.loadP.toFixed(1)}W (above ${thresholds.loadP}W)`);
+  if (r.panelV != null && r.panelV > thresholds.panelV && r.panelP != null && r.panelP < thresholds.panelP)
+    msgs.push(`Panel underproducing: ${r.panelP.toFixed(1)}W while daylight (check dust/shading/wiring)`);
+
+  const banner = document.getElementById('alertBanner');
+  if (msgs.length) {
+    banner.innerHTML = '<b>ALERT —</b> ' + msgs.join(' · ');
+    banner.classList.add('show');
+  } else {
+    banner.classList.remove('show');
+  }
+}
+
+// ---------------- theme ----------------
+async function initTheme(){
+  let theme = null;
+  try {
+    const t = await storage.get('theme-preference');
+    if (t && t.value) theme = t.value;
+  } catch(e){}
+  if (!theme) {
+    theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+  applyTheme(theme);
+}
+
+function applyTheme(theme){
+  document.documentElement.setAttribute('data-theme', theme);
+  document.getElementById('themeBtn').textContent = theme === 'light' ? '☀️' : '🌙';
+  Object.values(hist).forEach((arr, idx) => drawSpark(groups[idx], arr)); // recolor sparklines
+  if (window.__lastReading) renderGauge(window.__lastReading.batteryV);
+}
+
+document.getElementById('themeBtn').addEventListener('click', async () => {
+  const current = document.documentElement.getAttribute('data-theme') || 'dark';
+  const next = current === 'light' ? 'dark' : 'light';
+  applyTheme(next);
+  try { await storage.set('theme-preference', next); } catch(e){}
+});
+
+// ---------------- clock ----------------
+function tickClock(){
+  const now = new Date();
+  document.getElementById('clock').textContent = now.toLocaleTimeString();
+  document.getElementById('dateLbl').textContent = now.toLocaleDateString(undefined, { weekday:'short', month:'short', day:'numeric' });
+}
+setInterval(tickClock, 1000); tickClock();
+
+// flows start idle until real data arrives
+['flowPanel','flowBatt','flowLoad'].forEach(id => document.getElementById(id).classList.add('idle'));
+
+initTheme();
+loadPersisted();
+</script>
+</body>
+</html>
